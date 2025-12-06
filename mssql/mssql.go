@@ -107,8 +107,9 @@ func disableReaperFile() error {
 }
 
 // ConnectionString returns a fully constructed sqlserver connection string
-// using the resolved host, mapped port, and supplied password.
-func ConnectionString(ctx context.Context, c testcontainers.Container, password string) (string, error) {
+// using the resolved host, mapped port, and supplied password + database.
+// If database is empty, "master" is used.
+func ConnectionString(ctx context.Context, c testcontainers.Container, password string, database string) (string, error) {
 	host, err := c.Host(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get host: %w", err)
@@ -119,12 +120,17 @@ func ConnectionString(ctx context.Context, c testcontainers.Container, password 
 		return "", fmt.Errorf("failed to get mapped port: %w", err)
 	}
 
+	if database == "" {
+		database = "master"
+	}
+
 	connStr := fmt.Sprintf(
-		"sqlserver://%s:%s@%s:%s?database=master&encrypt=disable",
+		"sqlserver://%s:%s@%s:%s?database=%s&encrypt=disable",
 		DefaultUser,
 		password,
 		host,
 		mapped.Port(),
+		database,
 	)
 
 	return connStr, nil

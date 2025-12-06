@@ -22,7 +22,7 @@ func TestRunMssqlPreset(t *testing.T) {
 	}
 
 	// Get connection string
-	connStr, err := ConnectionString(ctx, c, pw)
+	connStr, err := ConnectionString(ctx, c, pw, "")
 	if err != nil {
 		t.Fatalf("failed to get connection string: %v", err)
 	}
