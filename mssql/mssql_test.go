@@ -31,6 +31,8 @@ func TestRunMssqlPreset(t *testing.T) {
 	db, err := sql.Open("sqlserver", connStr)
 	if err != nil {
 		t.Fatalf("failed to open sql connection: %v", err)
+	} else {
+		t.Logf("successfully opened connection to sql server")
 	}
 	defer db.Close()
 

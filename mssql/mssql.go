@@ -17,68 +17,84 @@ const (
 	defaultPort     = "1433/tcp"
 )
 
+// -----------------------------------------------------------------------------
+// Options
+// -----------------------------------------------------------------------------
+
 // RunOptions holds optional flags and overrides for Run.
 type RunOptions struct {
 	DisableReaper bool
-	Password      string // optional override for SA password
+	Password      string
 }
 
 // RunOption configures RunOptions.
 type RunOption func(*RunOptions)
 
-// WithReaperDisabled disables Ryuk via ~/.testcontainers.properties
-// so that containers are not auto-removed after the test process exits.
 func WithReaperDisabled() RunOption {
 	return func(o *RunOptions) {
 		o.DisableReaper = true
 	}
 }
 
-// WithPassword overrides the SA password used by SQL Server.
 func WithPassword(pw string) RunOption {
 	return func(o *RunOptions) {
 		o.Password = pw
 	}
 }
 
+// -----------------------------------------------------------------------------
+// Run
+// -----------------------------------------------------------------------------
+
 // Run starts an MSSQL container with optional RunOptions.
-//
-// Example:
-//
-//	c, err := mssql.Run(ctx,
-//	    mssql.WithPassword("MyStr0ngP@ss"),
-//	    mssql.WithReaperDisabled(),
-//	)
 func Run(ctx context.Context, opts ...RunOption) (testcontainers.Container, error) {
-
-	// Create empty options
+	// Collect options
 	options := RunOptions{}
-
-	// Apply provided options by calling each funct
 	for _, optionFunc := range opts {
 		optionFunc(&options)
 	}
 
-	// Disable reaper if requested
+	// Disable Ryuk global reaper if requested
 	if options.DisableReaper {
 		if err := disableReaperFile(); err != nil {
 			return nil, fmt.Errorf("failed to disable reaper: %w", err)
 		}
 	}
 
-	// Use provided password or default
 	password := DefaultPassword
 	if options.Password != "" {
 		password = options.Password
 	}
 
+	// Build container request with mounted config file
 	req := containerRequest(password)
+
 	return testcontainers.GenericContainer(ctx, req)
 }
 
-// containerRequest builds the GenericContainerRequest with the resolved password.
-// Internal helper; callers should use Run().
+// -----------------------------------------------------------------------------
+// Internal: container request builder
+// -----------------------------------------------------------------------------
+
+// containerRequest builds the GenericContainerRequest with SQL Agent enabled.
+// It *always* generates and mounts mssql.conf before container creation.
 func containerRequest(password string) testcontainers.GenericContainerRequest {
+	// Create temp config file (enables SQL Agent)
+	confPath, err := createMSSQLConf()
+	if err != nil {
+		// Fail-fast: presets must not silently misconfigure SQL Server
+		panic(fmt.Errorf("failed to create mssql.conf: %w", err))
+	}
+
+	// File mount instruction
+	files := []testcontainers.ContainerFile{
+		{
+			HostFilePath:      confPath,
+			ContainerFilePath: "/var/opt/mssql/mssql.conf",
+			FileMode:          0o644,
+		},
+	}
+
 	return testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image: DefaultImage,
@@ -88,9 +104,32 @@ func containerRequest(password string) testcontainers.GenericContainerRequest {
 			},
 			ExposedPorts: []string{defaultPort},
 			WaitingFor:   wait.ForListeningPort(defaultPort),
+			Files:        files,
 		},
 		Started: true,
 	}
+}
+
+// -----------------------------------------------------------------------------
+// Internal helpers
+// -----------------------------------------------------------------------------
+
+// createMSSQLConf enables SQL Agent so CDC works inside the container.
+func createMSSQLConf() (string, error) {
+	dir, err := os.MkdirTemp("", "mssql-conf-*")
+	if err != nil {
+		return "", err
+	}
+
+	path := filepath.Join(dir, "mssql.conf")
+
+	content := []byte("[sqlagent]\nenabled = true\n")
+
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		return "", err
+	}
+
+	return path, nil
 }
 
 // disableReaperFile writes ~/.testcontainers.properties with ryuk.disabled=true.
@@ -106,9 +145,12 @@ func disableReaperFile() error {
 	return os.WriteFile(path, content, 0o644)
 }
 
-// ConnectionString returns a fully constructed sqlserver connection string
-// using the resolved host, mapped port, and supplied password + database.
-// If database is empty, "master" is used.
+// -----------------------------------------------------------------------------
+// Public: Connection string
+// -----------------------------------------------------------------------------
+
+// ConnectionString builds a sqlserver:// connection string for the given DB name.
+// If database = "", "master" is used.
 func ConnectionString(ctx context.Context, c testcontainers.Container, password string, database string) (string, error) {
 	host, err := c.Host(ctx)
 	if err != nil {
