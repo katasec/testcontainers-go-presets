@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -103,8 +105,15 @@ func containerRequest(password string) testcontainers.GenericContainerRequest {
 				"SA_PASSWORD": password,
 			},
 			ExposedPorts: []string{defaultPort},
-			WaitingFor:   wait.ForListeningPort(defaultPort),
-			Files:        files,
+			HostConfigModifier: func(hc *container.HostConfig) {
+				hc.PortBindings = nat.PortMap{
+					nat.Port(defaultPort): []nat.PortBinding{
+						{HostIP: "0.0.0.0", HostPort: "1433"},
+					},
+				}
+			},
+			WaitingFor: wait.ForListeningPort(defaultPort),
+			Files:      files,
 		},
 		Started: true,
 	}
@@ -151,27 +160,16 @@ func disableReaperFile() error {
 
 // ConnectionString builds a sqlserver:// connection string for the given DB name.
 // If database = "", "master" is used.
+// The container is always bound to localhost:1433, so no port mapping lookup is needed.
 func ConnectionString(ctx context.Context, c testcontainers.Container, password string, database string) (string, error) {
-	host, err := c.Host(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get host: %w", err)
-	}
-
-	mapped, err := c.MappedPort(ctx, defaultPort)
-	if err != nil {
-		return "", fmt.Errorf("failed to get mapped port: %w", err)
-	}
-
 	if database == "" {
 		database = "master"
 	}
 
 	connStr := fmt.Sprintf(
-		"sqlserver://%s:%s@%s:%s?database=%s&encrypt=disable",
+		"sqlserver://%s:%s@localhost:1433?database=%s&encrypt=disable",
 		DefaultUser,
 		password,
-		host,
-		mapped.Port(),
 		database,
 	)
 
